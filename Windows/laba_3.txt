@@ -1,0 +1,209 @@
+#define _CRT_SECURE_NO_WARNINGS
+
+#include <conio.h>
+#include <windows.h>
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <limits>
+
+using namespace std;
+
+
+const int kMaxSize = 100;
+const int kDelay = 100;
+const DWORD kDwMaximumSizeLow = 0;
+const DWORD kDwMaximumSizeHigh = kMaxSize;
+
+#undef max
+
+void Child();
+void Parent(char*);
+
+void main(int argc, char* argv[]) {
+
+	if (argc > 1) {
+		Child();
+	}
+	else {
+		Parent(argv[0]);
+	}
+}
+
+void Child() {
+	HANDLE Work = OpenSemaphore(
+		/*
+		 *Доступ к объекту семафора. Функция не работает, если дескриптор безопасности указанного
+		 *объекта не разрешает запрашиваемый доступ для вызывающего процесса
+		 */
+		SEMAPHORE_ALL_ACCESS,
+		/*Если это значение TRUE, процессы, созданные этим процессом, наследуют дескриптор. В противном случае процессы не наследуют этот дескриптор.*/
+		FALSE,
+		"Work");
+	HANDLE Close = OpenSemaphore(SEMAPHORE_ALL_ACCESS, FALSE, "Close");
+	HANDLE WINAPI FileProjection = OpenFileMapping(
+		/*Доступ к объекту сопоставления файлов. Этот доступ проверяется на любой дескриптор безопасности в объекте сопоставления целевого файла.*/
+		FILE_MAP_ALL_ACCESS,
+		/*Не наследует дескриптор*/
+		FALSE,
+		/*Имя объекта сопоставления файлов, который нужно открыть. Если с этим именем есть открытый дескриптор объекта
+		сопоставления файлов, а дескриптор безопасности в объекте сопоставления не
+		конфликтует с параметром dwDesiredAccess, операция открытия успешно завершается.*/
+		"FileProjection");
+
+	LPVOID pointer;
+	pointer = MapViewOfFile(FileProjection,
+		/*Отображается представление чтения / записи файла. Объект сопоставления файлов должен быть
+		создан с защитой PAGE_READWRITE или PAGE_EXECUTE_READWRITE.*/
+		FILE_MAP_ALL_ACCESS,
+		/*DWORD верхнего порядка смещения файла, где начинается представление.*/
+		0,
+		/*DWORD младшего порядка для смещения файла, где должно начинаться представление.
+		Комбинация высоких и низких смещений должна указывать смещение в сопоставлении файлов.
+		Они также должны соответствовать гранулярности распределения памяти в системе.
+		То есть, смещение должно быть кратным гранулярности распределения.*/
+		0,
+		/*Число байтов сопоставления файлов для сопоставления с представлением.
+		Все байты должны быть в максимальном размере, указанном CreateFileMapping.
+		Если этот параметр равен 0 (ноль), отображение продолжается от указанного смещения до конца сопоставления файлов.*/
+		0);
+
+	char* stringRepresentation = (char*)pointer;
+
+	while (true)
+	{
+		WaitForSingleObject(Work, INFINITE);
+
+		if (WaitForSingleObject(Close, kDelay) == WAIT_OBJECT_0) {
+			CloseHandle(Work);
+			CloseHandle(Close);
+			UnmapViewOfFile(pointer);
+			CloseHandle(FileProjection);
+			return;
+		}
+
+		cout << "Client got: " << stringRepresentation << endl;
+
+		ReleaseSemaphore(
+			Work,										// HANDLE семафора							
+			1,											// на сколько изменять счетчик
+			NULL);										// предыдущее значение
+	}
+}
+
+void Parent(char* input) {
+
+	HANDLE Work = CreateSemaphore(
+		/*Элемент lpSecurityDescriptor структуры указывает дескриптор безопасности для нового семафора.
+		Если этот параметр равен NULL, семафор получает дескриптор безопасности по умолчанию.*/
+		NULL,
+		/*Начальный счет для объекта семафора. Это значение должно быть больше или равно нулю и меньше или равно lMaximumCount.
+		Состояние семафора сигнализируется, когда его количество больше нуля и не имеет значения, когда оно равно нулю.
+		Счет уменьшается на единицу, когда функция ожидания освобождает поток, ожидающий семафор.
+		Счет увеличивается на указанное количество, вызывая функцию ReleaseSemaphore.*/
+		0,
+		/*Максимальный счетчик для объекта семафора. Это значение должно быть больше нуля.*/
+		1,
+		/*Если lpName соответствует имени существующего объекта семафора, эта функция запрашивает право доступа SEMAPHORE_ALL_ACCESS.
+		В этом случае параметры lInitialCount и lMaximumCount игнорируются, поскольку они уже были установлены процессом создания.
+		Если параметр lpSemaphoreAttributes не равен NULL, он определяет, можно ли наследовать дескриптор, но его элемент дескриптора безопасности игнорируется.*/
+		"Work");
+
+	HANDLE Close = CreateSemaphore(
+		NULL,											// атрибут доступа
+		0,												// инициализированное начальное состояние счетчика
+		1,												// максимальное количество обращений
+		"Close");										// имя объекта
+
+	HANDLE WINAPI FileProjection = CreateFileMapping(
+		/*Дескриптор файла, из которого можно создать объект сопоставления файлов.
+		Если hFile является INVALID_HANDLE_VALUE, вызывающий процесс должен также указать размер для объекта сопоставления файлов
+		в параметрах dwMaximumSizeHigh и dwMaximumSizeLow. В этом случае CreateFileMapping создает объект сопоставления файлов
+		указанного размера, который поддерживается файлом подкачки системы, а не файлом в файловой системе.*/
+		INVALID_HANDLE_VALUE,
+		/*Указатель на структуру SECURITY_ATTRIBUTES, которая определяет, может ли возвращенный дескриптор наследоваться дочерними процессами.
+		Член lpSecurityDescriptor структуры SECURITY_ATTRIBUTES указывает дескриптор безопасности для нового объекта сопоставления файлов.
+		Если lpAttributes NULL, дескриптор не может быть унаследован, а объект сопоставления файлов получает дескриптор безопасности по умолчанию.*/
+		NULL,
+		/*Указывает защиту страницы объекта сопоставления файлов. Все сопоставленные виды объекта должны быть совместимы с этой защитой.
+		PAGE_READWRITE позволяет отображать представления для чтения только для чтения, копирования на запись или доступа для чтения / записи.*/
+		PAGE_READWRITE,
+		/*DWORD максимального размера объекта сопоставления файлов.*/
+		kDwMaximumSizeLow,
+		/*Минимальное значение DWORD для максимального размера объекта сопоставления файлов.
+		Если этот параметр и dwMaximumSizeHigh равны 0 (ноль), максимальный размер объекта сопоставления файлов равен текущему размеру файла,
+		который hFile идентифицирует.*/
+		kDwMaximumSizeHigh,
+		/*Имя объекта сопоставления файлов.
+		Если этот параметр соответствует имени существующего объекта сопоставления,
+		функция запрашивает доступ к объекту с защитой, которую определяет функция flProtect.*/
+		"FileProjection");
+
+	STARTUPINFO si;
+	ZeroMemory(&si, sizeof(STARTUPINFO));
+	si.cb = sizeof(STARTUPINFO);
+	PROCESS_INFORMATION pi;
+
+	if (!CreateProcess(input,							// Имя модуля
+		(LPSTR)"child process",							// Командная строка
+		NULL,											// Дескриптор процесса
+		NULL,											// Дескриптор потока
+		FALSE,											// Установка описателей наследования
+		NULL, //CREATE_NEW_CONSOLE,						// Флаг создания процесса
+		NULL,											// блок переменных окружения родительского процесса
+		NULL,											// Текущий каталог родительскоого процесса
+		&si,											// указатель на  структуру
+		&pi)											// Указатель на структуру информаций о процессе
+		) {
+		cout << "Create Process failed" << GetLastError() << endl;
+		system("pause");
+		exit(EXIT_FAILURE);
+	}
+
+	LPVOID memoryMap = MapViewOfFile(					// отображает представление проецируемого файла в адресное пространство вызывающего процесса.
+		FileProjection,									// дескр. объекта проецируемый файл
+		FILE_MAP_ALL_ACCESS,							// режим доступа
+														// FILE_MAP_ALL_ACCESS - Доступ к операциям чтения-записи.
+														// Отображаемый объект должен быть создан с защитой PAGE_READWRITE.
+														// Чтение/запись представления файла отображается. 
+		0,												// старшее DWORD смещения
+		0,												// младшее DWORD смещения
+		0);												// число отображаемых байтов. Если равно 0 отображается весь файл
+
+	char* stringRepresentation = (char*)memoryMap;
+
+	string buffString;
+	
+
+	while (true)
+	{
+
+		cout << "Server: ";
+		getline(cin, buffString);
+		
+		if (buffString.empty())
+		{
+
+			ReleaseSemaphore(Close, 1, NULL);	//Увеличивает количество указанного объекта семафора на определенное значение.
+			ReleaseSemaphore(Work, 1, NULL);
+			WaitForSingleObject(pi.hProcess, INFINITE);
+			UnmapViewOfFile(memoryMap);			//Отключает сопоставленный вид файла из адресного пространства вызывающего процесса.
+			CloseHandle(pi.hThread);
+			CloseHandle(pi.hProcess);
+			CloseHandle(Close);
+			CloseHandle(Work);
+			CloseHandle(FileProjection);
+			return;
+
+
+		}
+
+		strcpy(stringRepresentation, const_cast<char*>(buffString.c_str()));
+	
+		ReleaseSemaphore(Work, 1, NULL);
+		WaitForSingleObject(Work, INFINITE);
+
+
+	}
+}
